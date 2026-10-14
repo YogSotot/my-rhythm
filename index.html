@@ -41,7 +41,67 @@ function today(){let sport=weekCount(state.selected);return `<div class="card"><
 function sport(){return `<div class="card"><div class="day"><div><div class="title">Основная тренировка</div><div class="small">3 раза в неделю · 25–30 минут</div></div><span class="pill">${workouts.filter((_,i)=>checked('w'+i)).length}/5</span></div>${workouts.map((x,i)=>box('w'+i,x)).join('')}</div><div class="card"><div class="title">Ежедневно</div>${box('daily0',daily[0])}</div><div class="card"><div class="title">Короткий блок</div>${daily.slice(1).map((x,i)=>box('daily'+(i+1),x)).join('')}</div>${note()}`}
 function food(){return `<div class="card"><div class="title">Питание</div>${meals.map((x,i)=>box('meal'+i,x)).join('')}</div><div class="card"><div class="title">Осознанность</div>${box('mindful','Есть осознанно')}</div><div class="card"><div class="title">Принцип</div><div class="small">Регулярность важнее идеальности. Минимум 3 часа между приёмами пищи.</div></div>${note()}`}
 function habits(){return `<div class="card"><div class="title">Привычки</div>${box('creative','Творчество / Рисование — минимум 10 минут')}</div>${note()}`}
-function history(){const start=weekStart(state.selected),days=Array.from({length:7},(_,i)=>shiftDay(start,i));const count=weekCount(state.selected);const all=Object.keys(state.days).sort().reverse().filter(k=>k<=dateKey(new Date()));return `<div class="card"><div class="title">Неделя · ${escapeHtml(start)}</div><div class="week" style="justify-content:space-between">${days.map(k=>`<div style="text-align:center"><button class="dot ${doneWorkout(k)?'done':''}" style="border:0;cursor:pointer;outline:${state.selected===k?'2px solid var(--accent)':'none'}" onclick="selectDay('${k}')">${doneWorkout(k)?'✓':parseDay(k).getDate()}</button><div class="small" style="margin-top:4px">${['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][parseDay(k).getDay()]}</div></div>`).join('')}</div></div><div class="card"><div class="title">Спорт за неделю</div><div class="day"><span>Основных тренировок</span><b>${count}/3</b></div><div class="progress"><div class="bar" style="width:${Math.min(100,count/3*100)}%"></div></div></div><div class="card"><div class="title">Сохранённые дни</div>${all.length?all.map(k=>`<div class="row"><button class="action" onclick="selectDay('${k}')">${k===state.selected?'✓ ':''}${escapeHtml(k)}</button><span class="small">${doneWorkout(k)?'Тренировка · ':''}${Object.values(record(k).checks).filter(Boolean).length} отметок${record(k).note?' · заметка':''}</span></div>`).join(''):'<div class="small">Пока нет записей</div>'}</div>${note()}`}
+function history(){const start=weekStart(state.selected),days=Array.from({length:7},(_,i)=>shiftDay(start,i));const count=weekCount(state.selected);const all=Object.keys(state.days).sort().reverse().filter(k=>k<=dateKey(new Date()));return `<div class="card"><div class="title">Неделя · ${escapeHtml(start)}</div><div class="week" style="justify-content:space-between">${days.map(k=>`<div style="text-align:center"><button class="dot ${doneWorkout(k)?'done':''}" style="border:0;cursor:pointer;outline:${state.selected===k?'2px solid var(--accent)':'none'}" onclick="selectDay('${k}')">${doneWorkout(k)?'✓':parseDay(k).getDate()}</button><div class="small" style="margin-top:4px">${['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][parseDay(k).getDay()]}</div></div>`).join('')}</div></div><div class="card"><div class="title">Спорт за неделю</div><div class="day"><span>Основных тренировок</span><b>${count}/3</b></div><div class="progress"><div class="bar" style="width:${Math.min(100,count/3*100)}%"></div></div></div><div class="card"><div class="title">Сохранённые дни</div>${all.length?all.map(k=>`<div class="row"><button class="action" onclick="selectDay('${k}')">${k===state.selected?'✓ ':''}${escapeHtml(k)}</button><span class="small">${doneWorkout(k)?'Тренировка · ':''}${Object.values(record(k).checks).filter(Boolean).length} отметок${record(k).note?' · заметка':''}</span></div>`).join(''):'<div class="small">Пока нет записей</div>'}</div>${note()}${backupControls()}`}
+
+
+const BACKUP_FORMAT='my-rhythm-backup';
+const BACKUP_VERSION=1;
+const MAX_BACKUP_BYTES=5*1024*1024;
+const CHECK_KEYS=new Set(['w0','w1','w2','w3','w4','daily0','daily1','daily2','daily3','meal0','meal1','meal2','meal3','mindful','creative']);
+function validDateKey(k){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(k))return false;
+  const d=parseDay(k);
+  return !Number.isNaN(d.getTime())&&dateKey(d)===k;
+}
+function validatedDays(value){
+  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Некорректный список дней.');
+  const cleaned=Object.create(null);
+  const entries=Object.entries(value);
+  if(entries.length>20000)throw Error('Слишком много записей.');
+  for(const [date,entry] of entries){
+    if(!validDateKey(date)||!entry||typeof entry!=='object'||Array.isArray(entry))throw Error('Некорректная дата или запись.');
+    if(typeof entry.note!=='string'||entry.note.length>100000||!entry.checks||typeof entry.checks!=='object'||Array.isArray(entry.checks))throw Error('Некорректные данные дня '+date);
+    const checks={};
+    for(const [key,val] of Object.entries(entry.checks)){
+      if(!CHECK_KEYS.has(key)||typeof val!=='boolean')throw Error('Некорректная отметка за '+date);
+      checks[key]=val;
+    }
+    cleaned[date]={checks,note:entry.note};
+  }
+  return cleaned;
+}
+function exportBackup(){
+  try{
+    const days=validatedDays(state.days);
+    const payload={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),days};
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download='my-rhythm-backup-'+dateKey(new Date())+'.json';document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+  }catch(e){alert('Не удалось создать резервную копию: '+e.message)}
+}
+async function importBackup(input){
+  const file=input.files&&input.files[0];input.value='';
+  if(!file)return;
+  try{
+    if(file.size>MAX_BACKUP_BYTES)throw Error('Файл больше 5 МБ.');
+    const payload=JSON.parse(await file.text());
+    if(!payload||payload.format!==BACKUP_FORMAT||payload.version!==BACKUP_VERSION)throw Error('Это не резервная копия My Rhythm поддерживаемой версии.');
+    const incoming=validatedDays(payload.days);
+    const current=validatedDays(state.days);
+    const existing=new Set(Object.keys(current));
+    const dates=Object.keys(incoming);
+    const overlaps=dates.filter(k=>existing.has(k)).length;
+    if(!confirm(`Импортировать ${dates.length} дней?\nСовпадающие даты будут заменены: ${overlaps}.\nОстальные текущие даты сохранятся.\n\nПродолжить?`))return;
+    const merged=Object.assign(Object.create(null),current,incoming);
+    const serialized=JSON.stringify(merged);
+    try{localStorage.setItem(STORE,serialized)}catch{throw Error('Не удалось сохранить импорт. Проверьте свободное место в браузере.');}
+    state.days=merged;
+    render();
+    alert(`Импорт завершён. Добавлено дней: ${dates.length-overlaps}; заменено: ${overlaps}.`);
+  }catch(e){alert('Импорт отменён: '+(e instanceof SyntaxError?'неверный формат JSON.':e.message))}
+}
+function backupControls(){return `<div class="card"><div class="title">Резервная копия</div><div class="small" style="margin-bottom:12px">Скачайте все записи в JSON-файл или восстановите их из ранее сохранённой копии. Совпадающие даты при импорте заменяются, остальные сохраняются.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="action" onclick="exportBackup()">Скачать копию</button><label class="action" style="cursor:pointer">Восстановить из файла<input type="file" accept=".json,application/json" style="display:none" onchange="importBackup(this)"></label></div><div class="small" style="margin-top:12px">Файл храните в надёжном месте. Синхронизация между устройствами пока не автоматическая.</div></div>`}
 
 const views={today:['Сегодня','◷',today],sport:['Спорт','♢',sport],food:['Питание','⌁',food],habits:['Привычки','✓',habits],history:['История','↻',history]};
 function render(){const current=dateKey(new Date());document.querySelector('.date').textContent=(state.selected===current?'Сегодня · ':'Просмотр · ')+parseDay(state.selected).toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'});main.innerHTML=(state.selected!==current?`<div class="card day"><span class="small">Запись за ${escapeHtml(state.selected)}</span><button class="action" onclick="selectDay('${current}')">К сегодня</button></div>`:'')+views[state.tab][2]();tabs.innerHTML=Object.entries(views).map(([k,v])=>`<button class="${state.tab===k?'active':''}" onclick="state.tab='${k}';render()"><span class="icon">${v[1]}</span>${v[0]}</button>`).join('')}
