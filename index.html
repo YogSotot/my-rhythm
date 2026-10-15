@@ -13,10 +13,18 @@ main{padding:8px 16px 94px;max-width:720px;margin:auto}.card{background:var(--ca
 .stat-link{width:100%;border:0;text-align:left;color:var(--text);font:inherit;cursor:pointer;transition:transform .12s,filter .12s}.stat-link:active{transform:scale(.97)}.stat-link:focus-visible,.calendar-day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .calendar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.calendar-head .title{margin:0}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.calendar-weekday{font-size:12px;color:var(--muted);padding:5px 0}.calendar-day{border:1px solid transparent;border-radius:10px;min-height:42px;background:var(--soft);color:var(--text);font:inherit;cursor:pointer;position:relative}.calendar-day:disabled{opacity:.25;cursor:default}.calendar-day.empty{visibility:hidden}.calendar-day.selected{border:2px solid var(--accent);font-weight:700}.calendar-day.has-data:after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);position:absolute;bottom:3px;left:calc(50% - 2.5px)}.calendar-day.workout{background:var(--accent);color:var(--card)}.calendar-day.workout:after{background:currentColor}.readonly-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.readonly-row:last-child{border:0}.history-note{white-space:pre-wrap;overflow-wrap:anywhere}
 .stats-switch{display:flex;gap:6px;margin:12px 0}.stats-switch button{flex:1}.stats-switch button.active{background:var(--accent);color:var(--card)}.chart-row{display:flex;align-items:end;gap:5px;height:95px;margin:14px 0 8px}.chart-column{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:5px}.chart-bar{width:100%;max-width:28px;min-height:3px;background:var(--accent);border-radius:5px 5px 2px 2px}.chart-label{font-size:10px;color:var(--muted);white-space:nowrap}.chart-empty{color:var(--muted);font-size:13px}
+.edit-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.edit-row{display:flex;gap:8px;align-items:center}.edit-row .row{flex:1;min-width:0}.edit-mini{border:0;background:var(--soft);color:var(--accent);border-radius:9px;padding:7px 9px;cursor:pointer}.edit-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}
 </style></head>
 <body><div id="app"><header><h1>Мой ритм</h1><div class="date">Сегодня · понедельник</div></header><main id="main"></main><nav class="tabs" id="tabs"></nav></div>
 <script>
 const STORE='my-rhythm-days-v1';
+
+// v0.7.1: независимая, версионированная модель пользовательского каталога.
+// На этом этапе она не изменяет отображение, статистику и формат резервных копий v1.
+const CONFIG_STORE='my-rhythm-config-v1';
+const CONFIG_VERSION=1;
+const MAX_CONFIG_BYTES=256*1024;
+
 
 // v0.6 / шаг 1: декларативный каталог. Пока только описание,
 // существующие обработчики, ключи localStorage и резервные копии не меняются.
@@ -63,9 +71,118 @@ function assertCatalogIntegrity(){
   }
 }
 assertCatalogIntegrity();
-function itemIdForLegacyKey(key){return ITEM_BY_LEGACY_KEY.get(key)?.id ?? null}
-function legacyKeyForItemId(id){return ITEM_BY_ID.get(id)?.legacyKey ?? null}
-function itemById(id){return ITEM_BY_ID.get(id) ?? null}
+
+// Снимок исходной конфигурации v0.6 — для существующей истории.
+// ID неизменны; пользовательское название может измениться позже.
+function defaultConfig(){
+  return {
+    version:CONFIG_VERSION,
+    items:ITEM_CATALOG.map(item=>({id:item.id,sectionId:item.sectionId,group:item.group,
+      title:item.title,order:item.order,legacyKey:item.legacyKey,archived:false})),
+    // События изменения набора активных элементов. Пустой массив означает
+    // исходные правила v0.6 для всех ранее записанных дат.
+    timeline:[]
+  };
+}
+function validateConfig(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==CONFIG_VERSION)
+    throw Error('Неподдерживаемая версия настроек.');
+  if(!Array.isArray(value.items)||!Array.isArray(value.timeline)||value.items.length>500||value.timeline.length>10000)
+    throw Error('Некорректный каталог настроек.');
+  const seen=new Set();const storageKeys=new Set();
+  const sections=new Set(SECTION_CATALOG.filter(s=>s.kind==='editable').map(s=>s.id));
+  for(const item of value.items){
+    if(!item||typeof item!=='object'||typeof item.id!=='string'||!/^[-.a-zA-Z0-9_]{1,100}$/.test(item.id)||seen.has(item.id))
+      throw Error('Некорректный или повторяющийся ID элемента.');
+    seen.add(item.id);const key=item.legacyKey||item.id;if(storageKeys.has(key))throw Error('Повторяющийся ключ отметки.');storageKeys.add(key);
+    if(!sections.has(item.sectionId)||typeof item.group!=='string'||!/^[-a-zA-Z]{1,40}$/.test(item.group)
+      ||typeof item.title!=='string'||!item.title.trim()||item.title.length>200
+      ||!Number.isSafeInteger(item.order)||item.order<0||item.order>100000
+      ||typeof item.archived!=='boolean'
+      ||!(item.legacyKey===null||typeof item.legacyKey==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(item.legacyKey)))
+      throw Error('Некорректные параметры элемента.');
+    if(!ITEM_BY_ID.has(item.id)&&item.legacyKey!==null)throw Error('У нового пункта не должно быть старого ключа.');
+    const original=ITEM_BY_ID.get(item.id);
+    if(original&&(item.sectionId!==original.sectionId||item.group!==original.group||item.legacyKey!==original.legacyKey))
+      throw Error('Нельзя изменить системную привязку элемента.');
+  }
+  // Пока не поддерживаем неполные каталоги: удаление в v0.7 будет
+  // архивированием либо отдельной операцией очистки истории.
+  for(const original of ITEM_CATALOG)if(!seen.has(original.id))throw Error('Отсутствует исходный элемент.');
+  let lastDate='';
+  for(const event of value.timeline){
+    if(!event||typeof event!=='object'||typeof event.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(event.date)
+      ||!validDateKey(event.date)||event.date<=lastDate||!Array.isArray(event.activeIds)||event.activeIds.length>500
+      ||new Set(event.activeIds).size!==event.activeIds.length||event.activeIds.some(id=>!seen.has(id)))
+      throw Error('Некорректная история настроек.');
+    lastDate=event.date;
+  }
+  return {version:CONFIG_VERSION,items:value.items.map(item=>({...item})),
+    timeline:value.timeline.map(event=>({date:event.date,activeIds:[...event.activeIds]}))};
+}
+function loadConfig(){
+  try{
+    const raw=localStorage.getItem(CONFIG_STORE);
+    if(raw===null)return defaultConfig();
+    if(raw.length>MAX_CONFIG_BYTES)throw Error('Слишком большой файл настроек.');
+    return validateConfig(JSON.parse(raw));
+  }catch(error){
+    // Не перезаписываем повреждённые настройки автоматически.
+    console.warn('My Rhythm: настройки не загружены; используется исходный каталог.',error);
+    return defaultConfig();
+  }
+}
+function saveConfig(config){
+  const validated=validateConfig(config);
+  const serialized=JSON.stringify(validated);
+  if(serialized.length>MAX_CONFIG_BYTES)throw Error('Настройки превышают допустимый размер.');
+  localStorage.setItem(CONFIG_STORE,serialized);
+  return validated;
+}
+let userConfig=loadConfig();
+// Сохранение пользовательского каталога будет включено вместе с редактором в v0.7.2.
+// В v0.7.1 никакие данные в localStorage автоматически не перезаписываются.
+
+function activeItems(sectionId,group,k=dateKey(new Date())){
+  const current=userConfig.items.filter(item=>item.sectionId===sectionId && (group===undefined||item.group===group));
+  const snapshot=[...userConfig.timeline].reverse().find(event=>event.date<=k);
+  const ids=snapshot?new Set(snapshot.activeIds):null;
+  return current.filter(item=>ids?ids.has(item.id):ITEM_BY_ID.has(item.id))
+    .sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
+}
+function allItemsForDate(k){
+  const snapshot=[...userConfig.timeline].reverse().find(event=>event.date<=k);
+  const ids=snapshot?new Set(snapshot.activeIds):null;
+  return userConfig.items.filter(item=>ids?ids.has(item.id):ITEM_BY_ID.has(item.id));
+}
+function storeKey(item){return item.legacyKey||item.id}
+function itemIdForLegacyKey(key){return userConfig.items.find(item=>storeKey(item)===key)?.id??null}
+function legacyKeyForItemId(id){const item=userConfig.items.find(item=>item.id===id);return item?storeKey(item):null}
+function itemById(id){return userConfig.items.find(item=>item.id===id)??null}
+function commitConfig(next){try{userConfig=saveConfig(next);render();return true}catch(error){alert('Не удалось сохранить настройки: '+error.message);return false}}
+function changeCatalog(mutator,changeMembership=false){
+  const next=structuredClone(userConfig);
+  mutator(next);
+  if(changeMembership){
+    const today=dateKey(new Date());
+    const ids=next.items.filter(item=>!item.archived).map(item=>item.id);
+    next.timeline=next.timeline.filter(event=>event.date!==today);
+    next.timeline.push({date:today,activeIds:ids});
+    next.timeline.sort((a,b)=>a.date.localeCompare(b.date));
+  }
+  return commitConfig(next);
+}
+function renameItem(id){const item=itemById(id);if(!item)return;const title=prompt('Новое название:',item.title);if(title===null)return;
+  const clean=title.trim();if(!clean||clean.length>200){alert('Название должно содержать от 1 до 200 символов.');return}
+  changeCatalog(config=>{config.items.find(x=>x.id===id).title=clean});
+}
+function addItem(sectionId,group){const title=prompt('Название нового пункта:');if(title===null)return;
+  const clean=title.trim();if(!clean||clean.length>200){alert('Название должно содержать от 1 до 200 символов.');return}
+  changeCatalog(config=>{const id='custom.'+(typeof crypto.randomUUID==='function'?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''));const groupItems=config.items.filter(x=>x.sectionId===sectionId&&x.group===group);
+    config.items.push({id,sectionId,group,title:clean,order:Math.max(-1,...groupItems.map(x=>x.order))+1,legacyKey:null,archived:false});
+  },true);
+}
+function addButton(sectionId,group){return `<div class="edit-tools"><button class="action" onclick="addItem('${sectionId}','${group}')">＋ Добавить пункт</button></div>`}
 
 const state={tab:'today',selected:dateKey(new Date()),month:dateKey(new Date()).slice(0,7),days:loadDays(),statsPeriod:7};
 function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -87,11 +204,11 @@ let lastToday=dateKey(new Date());
 
 // v0.6 / шаг 3: каталог становится единым источником отображаемых пунктов.
 // legacyKey сохраняется без изменений, поэтому миграция данных не требуется.
-function sectionItems(sectionId,group){return ITEM_CATALOG.filter(item=>item.sectionId===sectionId&&(group===undefined||item.group===group)).sort((a,b)=>a.order-b.order)}
+function sectionItems(sectionId,group,k=dateKey(new Date())){return activeItems(sectionId,group,k)}
 function itemWithKey(key){const item=ITEM_BY_LEGACY_KEY.get(key);if(!item)throw Error('Неизвестный ключ: '+key);return item}
-function itemChecked(item,k=state.selected){return !!record(k).checks[item.legacyKey]}
-function groupComplete(sectionId,group,k){const items=sectionItems(sectionId,group);return items.length>0&&items.every(item=>itemChecked(item,k))}
-function itemBox(item){return box(item.legacyKey,item.title)}
+function itemChecked(item,k=state.selected){return !!record(k).checks[storeKey(item)]}
+function groupComplete(sectionId,group,k){const items=sectionItems(sectionId,group,k);return items.length>0&&items.every(item=>itemChecked(item,k))}
+function itemBox(item){return `<div class="edit-row">${box(storeKey(item),escapeHtml(item.title))}<button class="edit-mini" title="Переименовать" aria-label="Переименовать" onclick="renameItem('${item.id}')">✎</button></div>`}
 function groupBoxes(sectionId,group){return sectionItems(sectionId,group).map(itemBox).join('')}
 
 function checked(k){return !!record().checks[k]}
@@ -104,32 +221,33 @@ function toggleItem(id){
 function toggle(k){const id=itemIdForLegacyKey(k);if(!id)throw Error('Неизвестный ключ: '+k);toggleItem(id)}
 function box(k,label){const id=itemIdForLegacyKey(k);if(!id)throw Error('Неизвестный ключ: '+k);return `<label class="row"><input type="checkbox" ${checked(k)?'checked':''} onchange="toggleItem('${id}')"><span>${label}</span></label>`}
 function note(){return `<div class="card section-note"><div class="title">Заметка дня</div><textarea class="note" placeholder="Что важно отметить сегодня?" oninput="updateNote(this.value)">${escapeHtml(record().note)}</textarea></div>`}
-function progress(){const items=[...sectionItems('sport','daily'),...sectionItems('sport','short'),...sectionItems('food','meals'),...sectionItems('habits','habits')];return Math.round(items.filter(item=>itemChecked(item)).length/items.length*100)}
+function progress(){const items=[...sectionItems('sport','daily'),...sectionItems('sport','short'),...sectionItems('food','meals'),...sectionItems('habits','habits')];return items.length?Math.round(items.filter(item=>itemChecked(item)).length/items.length*100):0}
 function today(){let sport=weekCount(state.selected);return `<div class="card"><div class="title">Сегодня</div><div class="grid"><button type="button" class="stat stat-link" onclick="navigate('sport')"><span class="small">Спорт</span><b>${sport}/3</b><span class="small">тренировок за неделю</span></button><button type="button" class="stat stat-link" onclick="navigate('food')"><span class="small">Питание</span><b>${sectionItems('food','meals').filter(item=>itemChecked(item)).length}/${sectionItems('food','meals').length}</b><span class="small">приёмов пищи</span></button><button type="button" class="stat stat-link" onclick="navigate('habits')"><span class="small">Привычка</span><b>${sectionItems('habits','habits').some(item=>itemChecked(item))?'✓':'—'}</b><span class="small">рисование</span></button><button type="button" class="stat stat-link" onclick="navigate('history')"><span class="small">Общий ориентир</span><b>${progress()}%</b><span class="small">без гонки за 100%</span></button></div><div class="progress"><div class="bar" style="width:${progress()}%"></div></div></div><div class="card"><div class="title">Сегодня достаточно</div><div class="small">Не обязательно закрывать всё. Главное — удерживать ритм и возвращаться к нему.</div></div>${note()}`}
-function sport(){const exerciseItems=sectionItems('sport','workout');return `<div class="card"><div class="day"><div><div class="title">Основная тренировка</div><div class="small">3 раза в неделю · 25–30 минут</div></div><span class="pill">${exerciseItems.filter(item=>itemChecked(item)).length}/${exerciseItems.length}</span></div>${groupBoxes('sport','workout')}<div style="margin-top:12px;padding-top:10px;border-top:2px solid var(--line)">${groupBoxes('sport','completion')}</div></div><div class="card"><div class="title">Ежедневно</div>${groupBoxes('sport','daily')}</div><div class="card"><div class="title">Короткий блок</div>${groupBoxes('sport','short')}</div>${note()}`}
-function food(){return `<div class="card"><div class="title">Питание</div>${groupBoxes('food','meals')}</div><div class="card"><div class="title">Осознанность</div>${groupBoxes('food','mindfulness')}</div><div class="card"><div class="title">Принцип</div><div class="small">Регулярность важнее идеальности. Минимум 3 часа между приёмами пищи.</div></div>${note()}`}
-function habits(){return `<div class="card"><div class="title">Привычки</div>${groupBoxes('habits','habits')}</div>${note()}`}
+function sport(){const exerciseItems=sectionItems('sport','workout');return `<div class="card"><div class="day"><div><div class="title">Основная тренировка</div><div class="small">3 раза в неделю · 25–30 минут</div></div><span class="pill">${exerciseItems.filter(item=>itemChecked(item)).length}/${exerciseItems.length}</span></div>${groupBoxes('sport','workout')}${addButton('sport','workout')}<div style="margin-top:12px;padding-top:10px;border-top:2px solid var(--line)">${groupBoxes('sport','completion')}</div></div><div class="card"><div class="title">Ежедневно</div>${groupBoxes('sport','daily')}${addButton('sport','daily')}</div><div class="card"><div class="title">Короткий блок</div>${groupBoxes('sport','short')}${addButton('sport','short')}</div>${note()}`}
+function food(){return `<div class="card"><div class="title">Питание</div>${groupBoxes('food','meals')}${addButton('food','meals')}</div><div class="card"><div class="title">Осознанность</div>${groupBoxes('food','mindfulness')}${addButton('food','mindfulness')}</div><div class="card"><div class="title">Принцип</div><div class="small">Регулярность важнее идеальности. Минимум 3 часа между приёмами пищи.</div></div>${note()}`}
+function habits(){return `<div class="card"><div class="title">Привычки</div>${groupBoxes('habits','habits')}${addButton('habits','habits')}</div>${note()}`}
 function changeMonth(delta){const [y,m]=state.month.split('-').map(Number);const d=new Date(y,m-1+delta,1);const target=dateKey(d).slice(0,7);if(target>dateKey(new Date()).slice(0,7))return;state.month=target;render()}
 function calendar(){const [year,month]=state.month.split('-').map(Number);const first=new Date(year,month-1,1);const offset=(first.getDay()+6)%7;const length=new Date(year,month,0).getDate();const now=dateKey(new Date());let cells=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(d=>`<span class="calendar-weekday">${d}</span>`);for(let i=0;i<offset;i++)cells.push('<span></span>');for(let day=1;day<=length;day++){const k=`${state.month}-${String(day).padStart(2,'0')}`;const future=k>now;cells.push(`<button type="button" class="calendar-day ${k===state.selected?'selected':''} ${Object.hasOwn(state.days,k)?'has-data':''} ${doneWorkout(k)?'workout':''}" ${future?'disabled':''} onclick="selectDay('${k}')" aria-label="${k}">${day}</button>`)}return `<div class="card"><div class="calendar-head"><button class="action" onclick="changeMonth(-1)" aria-label="Предыдущий месяц">‹</button><div class="title">${first.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</div><button class="action" onclick="changeMonth(1)" ${state.month>=now.slice(0,7)?'disabled':''} aria-label="Следующий месяц">›</button></div><div class="calendar-grid">${cells.join('')}</div><div class="small" style="margin-top:12px">Точка — есть запись. Зелёный день — выполнена основная тренировка.</div></div>`}
-function readonlyDay(k){const r=record(k);const keys=[...sectionItems('sport','workout'),...sectionItems('sport','daily'),...sectionItems('sport','short'),...sectionItems('food','meals'),...sectionItems('sport','completion'),...sectionItems('food','mindfulness'),...sectionItems('habits','habits')].map(item=>[item.legacyKey,item.title]);return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${Object.hasOwn(state.days,k)?keys.map(([key,label])=>`<div class="readonly-row"><span>${escapeHtml(label)}</span><b>${r.checks[key]?'✓':'—'}</b></div>`).join('')+'<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">'+(r.note?escapeHtml(r.note):'Нет заметки')+'</div>':'<div class="small">За этот день пока нет записей.</div>'}</div>`}
+function readonlyDay(k){const r=record(k);const keys=[...sectionItems('sport','workout',k),...sectionItems('sport','daily',k),...sectionItems('sport','short'),...sectionItems('food','meals'),...sectionItems('sport','completion',k),...sectionItems('food','mindfulness',k),...sectionItems('habits','habits',k)].map(item=>[storeKey(item),item.title]);return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${Object.hasOwn(state.days,k)?keys.map(([key,label])=>`<div class="readonly-row"><span>${escapeHtml(label)}</span><b>${r.checks[key]?'✓':'—'}</b></div>`).join('')+'<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">'+(r.note?escapeHtml(r.note):'Нет заметки')+'</div>':'<div class="small">За этот день пока нет записей.</div>'}</div>`}
 function foodDone(k){return groupComplete('food','meals',k)&&groupComplete('food','mindfulness',k)}
 function creativeDone(k){return groupComplete('habits','habits',k)}
 function statsPeriod(n){state.statsPeriod=n;render()}
 function statChart(title,dates,metric,total,subtitle){const n=dates.length;const step=n===30?5:1;const bars=dates.map((k,i)=>{const value=metric(k)?1:0;const label=(n===7||i%step===0||i===n-1)?String(parseDay(k).getDate()):'·';return `<div class="chart-column" title="${k}: ${value?'да':'нет'}"><div class="chart-bar" style="height:${value?68:3}px;${value?'':'opacity:.2'}"></div><span class="chart-label">${label}</span></div>`}).join('');return `<div class="card"><div class="day"><div class="title">${title}</div><span class="pill">${total}</span></div><div class="small">${subtitle}</div><div class="chart-row" role="img" aria-label="${title}: ${total} за ${n} дней">${bars}</div></div>`}
-function statistics(){const n=state.statsPeriod,now=dateKey(new Date()),dates=Array.from({length:n},(_,i)=>shiftDay(now,i-n+1));const workoutsDone=dates.filter(doneWorkout).length,foodDays=dates.filter(foodDone).length,creativeDays=dates.filter(creativeDone).length;return `<div class="card"><div class="title">Статистика</div><div class="small">За последние ${n} дней, включая сегодня</div><div class="stats-switch"><button class="action ${n===7?'active':''}" onclick="statsPeriod(7)">7 дней</button><button class="action ${n===30?'active':''}" onclick="statsPeriod(30)">30 дней</button></div></div>`+statChart('Спорт',dates,doneWorkout,workoutsDone+' тренировок','Цель — 3 тренировки в неделю · по отметке завершения')+statChart('Питание',dates,foodDone,Math.round(foodDays/n*100)+'% · '+foodDays+'/'+n+' дней','Все 4 приёма пищи и осознанное питание')+statChart('Творчество',dates,creativeDone,creativeDays+'/'+n+' дней','Рисование не менее 10 минут')}
+function statistics(){const n=state.statsPeriod,now=dateKey(new Date()),dates=Array.from({length:n},(_,i)=>shiftDay(now,i-n+1));const workoutsDone=dates.filter(doneWorkout).length,foodDays=dates.filter(foodDone).length,creativeDays=dates.filter(creativeDone).length;return `<div class="card"><div class="title">Статистика</div><div class="small">За последние ${n} дней, включая сегодня</div><div class="stats-switch"><button class="action ${n===7?'active':''}" onclick="statsPeriod(7)">7 дней</button><button class="action ${n===30?'active':''}" onclick="statsPeriod(30)">30 дней</button></div></div>`+statChart('Спорт',dates,doneWorkout,workoutsDone+' тренировок','Цель — 3 тренировки в неделю · по отметке завершения')+statChart('Питание',dates,foodDone,Math.round(foodDays/n*100)+'% · '+foodDays+'/'+n+' дней','Все пункты питания, действовавшие в соответствующий день')+statChart('Творчество',dates,creativeDone,creativeDays+'/'+n+' дней','Рисование не менее 10 минут')}
 function history(){const start=weekStart(state.selected),count=weekCount(state.selected);return calendar()+statistics()+`<div class="card"><div class="title">Спорт за неделю · ${escapeHtml(start)}</div><div class="day"><span>Основных тренировок</span><b>${count}/3</b></div><div class="progress"><div class="bar" style="width:${Math.min(100,count/3*100)}%"></div></div></div>`+readonlyDay(state.selected)+backupControls()}
 
 
 const BACKUP_FORMAT='my-rhythm-backup';
-const BACKUP_VERSION=1;
+const BACKUP_VERSION=2;
 const MAX_BACKUP_BYTES=5*1024*1024;
 const CHECK_KEYS=new Set(ITEM_CATALOG.map(item=>item.legacyKey));
+function allowedKeys(config=userConfig){return new Set([...CHECK_KEYS,...config.items.map(storeKey)])}
 function validDateKey(k){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(k))return false;
   const d=parseDay(k);
   return !Number.isNaN(d.getTime())&&dateKey(d)===k;
 }
-function validatedDays(value){
+function validatedDays(value,permittedKeys=allowedKeys()){
   if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Некорректный список дней.');
   const cleaned=Object.create(null);
   const entries=Object.entries(value);
@@ -139,7 +257,7 @@ function validatedDays(value){
     if(typeof entry.note!=='string'||entry.note.length>100000||!entry.checks||typeof entry.checks!=='object'||Array.isArray(entry.checks))throw Error('Некорректные данные дня '+date);
     const checks={};
     for(const [key,val] of Object.entries(entry.checks)){
-      if(!CHECK_KEYS.has(key)||typeof val!=='boolean')throw Error('Некорректная отметка за '+date);
+      if(!permittedKeys.has(key)||typeof val!=='boolean')throw Error('Некорректная отметка за '+date);
       checks[key]=val;
     }
     cleaned[date]={checks,note:entry.note};
@@ -149,7 +267,7 @@ function validatedDays(value){
 function exportBackup(){
   try{
     const days=validatedDays(state.days);
-    const payload={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),days};
+    const payload={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),days,config:userConfig};
     const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download='my-rhythm-backup-'+dateKey(new Date())+'.json';document.body.appendChild(a);a.click();a.remove();
@@ -162,17 +280,35 @@ async function importBackup(input){
   try{
     if(file.size>MAX_BACKUP_BYTES)throw Error('Файл больше 5 МБ.');
     const payload=JSON.parse(await file.text());
-    if(!payload||payload.format!==BACKUP_FORMAT||payload.version!==BACKUP_VERSION)throw Error('Это не резервная копия My Rhythm поддерживаемой версии.');
-    const incoming=validatedDays(payload.days);
+    if(!payload||payload.format!==BACKUP_FORMAT||![1,2].includes(payload.version))throw Error('Это не резервная копия My Rhythm поддерживаемой версии.');
+    const incomingConfig=payload.version===2?validateConfig(payload.config):null;
+    if(incomingConfig){for(const [date,entry] of Object.entries(payload.days||{})){for(const key of Object.keys(entry?.checks||{})){if(!incomingConfig.items.some(item=>storeKey(item)===key))throw Error('В резервной копии отсутствует описание пункта '+key)}}}
+    const incoming=validatedDays(payload.days,new Set([...CHECK_KEYS,...(incomingConfig?.items||[]).map(storeKey)]));
     const current=validatedDays(state.days);
     const existing=new Set(Object.keys(current));
     const dates=Object.keys(incoming);
     const overlaps=dates.filter(k=>existing.has(k)).length;
     if(!confirm(`Импортировать ${dates.length} дней?\nСовпадающие даты будут заменены: ${overlaps}.\nОстальные текущие даты сохранятся.\n\nПродолжить?`))return;
+    if(incomingConfig && JSON.stringify(incomingConfig)!==JSON.stringify(userConfig)){
+      if(!confirm('Резервная копия содержит настройки списка. При восстановлении они заменят текущие названия и пункты. Продолжить?'))return;
+    }
     const merged=Object.assign(Object.create(null),current,incoming);
+    // Сначала проверяем итоговый набор дней по каталогу, который останется после импорта.
+    // Иначе замена настроек могла сделать уже существующие пользовательские отметки недоступными.
+    const finalConfig=incomingConfig||userConfig;
+    validatedDays(merged,allowedKeys(finalConfig));
     const serialized=JSON.stringify(merged);
-    try{localStorage.setItem(STORE,serialized)}catch{throw Error('Не удалось сохранить импорт. Проверьте свободное место в браузере.');}
-    state.days=merged;
+    const previousConfig=localStorage.getItem(CONFIG_STORE);
+    try{
+      if(incomingConfig)saveConfig(incomingConfig);
+      localStorage.setItem(STORE,serialized);
+    }catch{
+      if(incomingConfig){
+        try{if(previousConfig===null)localStorage.removeItem(CONFIG_STORE);else localStorage.setItem(CONFIG_STORE,previousConfig)}catch{}
+      }
+      throw Error('Не удалось сохранить импорт. Исходные записи не изменены.');
+    }
+    state.days=merged;if(incomingConfig)userConfig=incomingConfig;
     render();
     alert(`Импорт завершён. Добавлено дней: ${dates.length-overlaps}; заменено: ${overlaps}.`);
   }catch(e){alert('Импорт отменён: '+(e instanceof SyntaxError?'неверный формат JSON.':e.message))}
