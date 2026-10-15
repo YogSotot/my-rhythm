@@ -13,7 +13,7 @@ main{padding:8px 16px 94px;max-width:720px;margin:auto}.card{background:var(--ca
 .stat-link{width:100%;border:0;text-align:left;color:var(--text);font:inherit;cursor:pointer;transition:transform .12s,filter .12s}.stat-link:active{transform:scale(.97)}.stat-link:focus-visible,.calendar-day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .calendar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.calendar-head .title{margin:0}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.calendar-weekday{font-size:12px;color:var(--muted);padding:5px 0}.calendar-day{border:1px solid transparent;border-radius:10px;min-height:42px;background:var(--soft);color:var(--text);font:inherit;cursor:pointer;position:relative}.calendar-day:disabled{opacity:.25;cursor:default}.calendar-day.empty{visibility:hidden}.calendar-day.selected{border:2px solid var(--accent);font-weight:700}.calendar-day.has-data:after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);position:absolute;bottom:3px;left:calc(50% - 2.5px)}.calendar-day.workout{background:var(--accent);color:var(--card)}.calendar-day.workout:after{background:currentColor}.readonly-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.readonly-row:last-child{border:0}.history-note{white-space:pre-wrap;overflow-wrap:anywhere}
 .stats-switch{display:flex;gap:6px;margin:12px 0}.stats-switch button{flex:1}.stats-switch button.active{background:var(--accent);color:var(--card)}.chart-row{display:flex;align-items:end;gap:5px;height:95px;margin:14px 0 8px}.chart-column{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:5px}.chart-bar{width:100%;max-width:28px;min-height:3px;background:var(--accent);border-radius:5px 5px 2px 2px}.chart-label{font-size:10px;color:var(--muted);white-space:nowrap}.chart-empty{color:var(--muted);font-size:13px}
-.edit-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.edit-row{display:flex;gap:8px;align-items:center}.edit-row .row{flex:1;min-width:0}.edit-mini{border:0;background:var(--soft);color:var(--accent);border-radius:9px;padding:7px 9px;cursor:pointer}.edit-toggle{margin-left:auto;white-space:nowrap}.edit-controls{display:flex;align-items:center;gap:5px;flex-shrink:0}.edit-arrows{display:flex;flex-direction:column;gap:3px}.edit-arrows .edit-mini{padding:3px 8px;min-width:33px;min-height:24px}.edit-mini:disabled{opacity:.28;cursor:default}.edit-row .row{border-bottom:0}.edit-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}
+.edit-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.edit-row{display:flex;gap:8px;align-items:center}.edit-row .row{flex:1;min-width:0}.edit-mini{border:0;background:var(--soft);color:var(--accent);border-radius:9px;padding:7px 9px;cursor:pointer}.edit-toggle{margin-left:auto;white-space:nowrap}.edit-controls{display:flex;align-items:center;gap:5px;flex-shrink:0}.edit-mini{min-width:38px;min-height:42px;display:inline-flex;align-items:center;justify-content:center}.drag-handle{touch-action:none;cursor:grab;font-size:22px;line-height:1}.drag-handle:active{cursor:grabbing}.edit-row.dragging{opacity:.5}.edit-row.drop-before{border-top:3px solid var(--accent)}.edit-row.drop-after{border-bottom:3px solid var(--accent)}.edit-row .row span{overflow-wrap:anywhere}.history-details{margin-top:12px}.history-details summary{cursor:pointer;color:var(--accent);font-weight:650;padding:10px 0}.history-group{font-weight:700;margin:14px 0 5px}.delete-choice{max-width:420px}.edit-mini:disabled{opacity:.28;cursor:default}.edit-row .row{border-bottom:0}.edit-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}
 </style></head>
 <body><div id="app"><header><h1>Мой ритм</h1><div class="date">Сегодня · понедельник</div></header><main id="main"></main><nav class="tabs" id="tabs"></nav></div>
 <script>
@@ -199,6 +199,70 @@ function moveItem(id,delta){
   });
 }
 
+function reorderItem(sourceId,targetId,after=false){
+  if(!state.editing||sourceId===targetId)return;
+  const source=itemById(sourceId),target=itemById(targetId);
+  if(!source||!target||source.sectionId!==target.sectionId||source.group!==target.group)return;
+  const peers=sectionItems(source.sectionId,source.group).map(x=>x.id);
+  const from=peers.indexOf(sourceId);if(from<0)return;
+  peers.splice(from,1);
+  let at=peers.indexOf(targetId)+(after?1:0);
+  peers.splice(at,0,sourceId);
+  changeCatalog(config=>peers.forEach((id,i)=>{config.items.find(x=>x.id===id).order=i}));
+}
+let dragState=null;
+function clearDragMarks(){document.querySelectorAll('.edit-row').forEach(el=>el.classList.remove('dragging','drop-before','drop-after'))}
+document.addEventListener('pointerdown',e=>{
+  const handle=e.target.closest('.drag-handle');if(!handle||!state.editing||e.button!==0)return;
+  const row=handle.closest('.edit-row');if(!row)return;
+  dragState={id:row.dataset.itemId,pointerId:e.pointerId,handle,target:null,after:false};
+  handle.setPointerCapture(e.pointerId);row.classList.add('dragging');e.preventDefault();
+});
+document.addEventListener('pointermove',e=>{
+  if(!dragState||e.pointerId!==dragState.pointerId)return;
+  clearDragMarks();const origin=document.querySelector(`.edit-row[data-item-id="${dragState.id}"]`);origin?.classList.add('dragging');
+  const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('.edit-row');
+  dragState.target=null;
+  if(target&&target.dataset.itemId!==dragState.id){
+    const source=itemById(dragState.id),dest=itemById(target.dataset.itemId);
+    if(source&&dest&&source.sectionId===dest.sectionId&&source.group===dest.group){
+      dragState.target=dest.id;dragState.after=e.clientY>target.getBoundingClientRect().top+target.offsetHeight/2;
+      target.classList.add(dragState.after?'drop-after':'drop-before');
+    }
+  }
+  if(e.clientY<60)window.scrollBy(0,-12);
+  else if(e.clientY>window.innerHeight-85)window.scrollBy(0,12);
+  e.preventDefault();
+});
+function finishDrag(e){if(!dragState||e.pointerId!==dragState.pointerId)return;
+  const {id,target,after}=dragState;dragState=null;clearDragMarks();if(target)reorderItem(id,target,after);
+}
+document.addEventListener('pointerup',finishDrag);
+document.addEventListener('pointercancel',e=>{if(dragState&&e.pointerId===dragState.pointerId){dragState=null;clearDragMarks()}});
+function deleteItem(id){
+  if(!state.editing)return;
+  const item=itemById(id);if(!item)return;
+  const action=prompt(`Что сделать с пунктом «${item.title}»?\n\n1 — Убрать из списка, сохранить историю (рекомендуется)\n2 — Убрать из списка и стереть все его отметки за прошлые дни\n\nВведите 1 или 2:`, '1');
+  if(action===null)return;
+  if(action!=='1'&&action!=='2'){alert('Введите 1 или 2.');return}
+  if(action==='2'&&!confirm(`Безвозвратно удалить ВСЕ отметки пункта «${item.title}» за все дни? Заметки и остальные пункты сохранятся. Рекомендуется сначала скачать резервную копию.`))return;
+  if(action==='1'){changeCatalog(config=>{config.items.find(x=>x.id===id).archived=true},true);return}
+  const next=structuredClone(userConfig);
+  next.items.find(x=>x.id===id).archived=true;
+  const today=dateKey(new Date());
+  next.timeline=next.timeline.filter(event=>event.date!==today);
+  next.timeline.push({date:today,activeIds:next.items.filter(x=>!x.archived).map(x=>x.id)});
+  next.timeline.sort((a,b)=>a.date.localeCompare(b.date));
+  const days=structuredClone(state.days),key=storeKey(item);
+  for(const day of Object.values(days))if(day&&day.checks)delete day.checks[key];
+  try{
+    const validated=validateConfig(next);validatedDays(days,allowedKeys(validated));
+    const oldConfig=localStorage.getItem(CONFIG_STORE),oldDays=localStorage.getItem(STORE);
+    try{saveConfig(validated);localStorage.setItem(STORE,JSON.stringify(days))}
+    catch(error){if(oldConfig===null)localStorage.removeItem(CONFIG_STORE);else localStorage.setItem(CONFIG_STORE,oldConfig);if(oldDays===null)localStorage.removeItem(STORE);else localStorage.setItem(STORE,oldDays);throw error}
+    userConfig=validated;state.days=days;render();
+  }catch(error){alert('Удаление не выполнено: '+error.message)}
+}
 const state={tab:'today',selected:dateKey(new Date()),month:dateKey(new Date()).slice(0,7),days:loadDays(),statsPeriod:7,editing:false};
 function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function parseDay(k){const [y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d)}
@@ -225,8 +289,7 @@ function itemChecked(item,k=state.selected){return !!record(k).checks[storeKey(i
 function groupComplete(sectionId,group,k){const items=sectionItems(sectionId,group,k);return items.length>0&&items.every(item=>itemChecked(item,k))}
 function itemBox(item){
   if(!state.editing)return box(storeKey(item),escapeHtml(item.title));
-  const peers=sectionItems(item.sectionId,item.group),i=peers.findIndex(x=>x.id===item.id);
-  return `<div class="edit-row">${box(storeKey(item),escapeHtml(item.title))}<div class="edit-controls"><button class="edit-mini" title="Переименовать" aria-label="Переименовать ${escapeHtml(item.title)}" onclick="renameItem('${item.id}')">✎</button><div class="edit-arrows"><button class="edit-mini" aria-label="Переместить вверх" onclick="moveItem('${item.id}',-1)" ${i===0?'disabled':''}>⌃</button><button class="edit-mini" aria-label="Переместить вниз" onclick="moveItem('${item.id}',1)" ${i===peers.length-1?'disabled':''}>⌄</button></div></div></div>`;
+  return `<div class="edit-row" data-item-id="${item.id}">${box(storeKey(item),escapeHtml(item.title))}<div class="edit-controls"><button class="edit-mini" title="Переименовать" aria-label="Переименовать ${escapeHtml(item.title)}" onclick="renameItem('${item.id}')">✎</button><button class="edit-mini drag-handle" title="Удерживайте и перетащите" aria-label="Перетащить ${escapeHtml(item.title)}">⠿</button><button class="edit-mini" title="Удалить" aria-label="Удалить ${escapeHtml(item.title)}" onclick="deleteItem('${item.id}')">🗑</button></div></div>`;
 }
 function groupBoxes(sectionId,group){return sectionItems(sectionId,group).map(itemBox).join('')}
 
@@ -248,7 +311,22 @@ function food(){return `<div class="card"><div class="day"><div class="title">П
 function habits(){return `<div class="card"><div class="day"><div class="title">Привычки</div>${editToggle()}</div>${groupBoxes('habits','habits')}${addButton('habits','habits')}</div>${note()}`}
 function changeMonth(delta){const [y,m]=state.month.split('-').map(Number);const d=new Date(y,m-1+delta,1);const target=dateKey(d).slice(0,7);if(target>dateKey(new Date()).slice(0,7))return;state.month=target;render()}
 function calendar(){const [year,month]=state.month.split('-').map(Number);const first=new Date(year,month-1,1);const offset=(first.getDay()+6)%7;const length=new Date(year,month,0).getDate();const now=dateKey(new Date());let cells=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(d=>`<span class="calendar-weekday">${d}</span>`);for(let i=0;i<offset;i++)cells.push('<span></span>');for(let day=1;day<=length;day++){const k=`${state.month}-${String(day).padStart(2,'0')}`;const future=k>now;cells.push(`<button type="button" class="calendar-day ${k===state.selected?'selected':''} ${Object.hasOwn(state.days,k)?'has-data':''} ${doneWorkout(k)?'workout':''}" ${future?'disabled':''} onclick="selectDay('${k}')" aria-label="${k}">${day}</button>`)}return `<div class="card"><div class="calendar-head"><button class="action" onclick="changeMonth(-1)" aria-label="Предыдущий месяц">‹</button><div class="title">${first.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</div><button class="action" onclick="changeMonth(1)" ${state.month>=now.slice(0,7)?'disabled':''} aria-label="Следующий месяц">›</button></div><div class="calendar-grid">${cells.join('')}</div><div class="small" style="margin-top:12px">Точка — есть запись. Зелёный день — выполнена основная тренировка.</div></div>`}
-function readonlyDay(k){const r=record(k);const keys=[...sectionItems('sport','workout',k),...sectionItems('sport','daily',k),...sectionItems('sport','short',k),...sectionItems('food','meals',k),...sectionItems('sport','completion',k),...sectionItems('food','mindfulness',k),...sectionItems('habits','habits',k)].map(item=>[storeKey(item),item.title]);return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${Object.hasOwn(state.days,k)?keys.map(([key,label])=>`<div class="readonly-row"><span>${escapeHtml(label)}</span><b>${r.checks[key]?'✓':'—'}</b></div>`).join('')+'<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">'+(r.note?escapeHtml(r.note):'Нет заметки')+'</div>':'<div class="small">За этот день пока нет записей.</div>'}</div>`}
+function readonlyDay(k){
+  const r=record(k),has=Object.hasOwn(state.days,k);
+  const sections=[['Спорт','sport',['workout','completion','daily','short']],['Питание','food',['meals','mindfulness']],['Привычки','habits',['habits']]];
+  const groups=sections.map(([title,section,parts])=>{
+    const items=parts.flatMap(group=>sectionItems(section,group,k));
+    // Архивирование сегодня заменяет снимок активных пунктов за эту дату.
+    // Поэтому показываем также пункты с сохранённой отметкой за день,
+    // даже если они уже отсутствуют в текущем снимке каталога.
+    const present=new Set(items.map(item=>item.id));
+    const archivedChecked=userConfig.items.filter(item=>item.sectionId===section&&parts.includes(item.group)
+      &&!present.has(item.id)&&r.checks[storeKey(item)]===true);
+    const historical=[...items,...archivedChecked].sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
+    return `<div class="history-group">${title}</div>`+historical.map(item=>`<div class="readonly-row"><span>${escapeHtml(item.title)}</span><b>${r.checks[storeKey(item)]?'✓':'—'}</b></div>`).join('');
+  }).join('');
+  return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${has?`<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">${r.note?escapeHtml(r.note):'Нет заметки'}</div><details class="history-details"><summary>Показать подробности дня</summary>${groups}</details>`:'<div class="small">За этот день пока нет записей.</div>'}</div>`;
+}
 function foodDone(k){return groupComplete('food','meals',k)&&groupComplete('food','mindfulness',k)}
 function creativeDone(k){return groupComplete('habits','habits',k)}
 function statsPeriod(n){state.statsPeriod=n;render()}
