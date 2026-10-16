@@ -15,6 +15,8 @@ main{padding:8px 16px 94px;max-width:720px;margin:auto}.card{background:var(--ca
 .stats-switch{display:flex;gap:6px;margin:12px 0}.stats-switch button{flex:1}.stats-switch button.active{background:var(--accent);color:var(--card)}.chart-row{display:flex;align-items:end;gap:5px;height:95px;margin:14px 0 8px}.chart-column{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:5px}.chart-bar{width:100%;max-width:28px;min-height:3px;background:var(--accent);border-radius:5px 5px 2px 2px}.chart-label{font-size:10px;color:var(--muted);white-space:nowrap}.chart-empty{color:var(--muted);font-size:13px}
 .edit-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.edit-row{display:flex;gap:8px;align-items:center}.edit-row .row{flex:1;min-width:0}.edit-mini{border:0;background:var(--soft);color:var(--accent);border-radius:9px;padding:7px 9px;cursor:pointer}.edit-toggle{margin-left:auto;white-space:nowrap}.edit-controls{display:flex;align-items:center;gap:5px;flex-shrink:0}.edit-mini{min-width:38px;min-height:42px;display:inline-flex;align-items:center;justify-content:center}.drag-handle{touch-action:none;cursor:grab;font-size:22px;line-height:1}.drag-handle:active{cursor:grabbing}.edit-row.dragging{opacity:.5}.edit-row.drop-before{border-top:3px solid var(--accent)}.edit-row.drop-after{border-bottom:3px solid var(--accent)}.edit-row .row span{overflow-wrap:anywhere}.history-details{margin-top:12px}.history-details summary{cursor:pointer;color:var(--accent);font-weight:650;padding:10px 0}.history-group{font-weight:700;margin:14px 0 5px}.delete-choice{max-width:420px}.edit-mini:disabled{opacity:.28;cursor:default}.edit-row .row{border-bottom:0}.edit-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}
 .habit-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}.habit-metric{padding:12px;border-radius:12px;background:var(--soft)}.habit-metric b{font-size:23px;display:block}.habit-details{margin-top:14px}.habit-details summary{cursor:pointer;color:var(--accent);font-weight:650;padding:10px 0}.habit-stat{padding:12px 0;border-top:1px solid var(--line)}.habit-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-top:8px}.habit-days.long{grid-template-columns:repeat(15,minmax(0,1fr))}.habit-day{min-width:0;border-radius:6px;background:var(--line);text-align:center;padding:8px 0;font-size:11px;color:var(--muted)}.habit-day.yes{background:var(--accent);color:var(--card)}.habit-day.na{background:transparent;border:1px dashed var(--line);color:var(--muted)}
+
+.history-edit-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}.history-edit-actions .primary{background:var(--accent);color:var(--card)}.history-edit-row{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.history-edit-row input{width:21px;height:21px;accent-color:var(--accent);flex-shrink:0}.history-edit-row span{overflow-wrap:anywhere}.history-edit-note{margin-top:12px}
 </style></head>
 <body><div id="app"><header><h1>Мой ритм</h1><div class="date">Сегодня · понедельник</div></header><main id="main"></main><nav class="tabs" id="tabs"></nav></div>
 <script>
@@ -264,7 +266,7 @@ function deleteItem(id){
     userConfig=validated;state.days=days;render();
   }catch(error){alert('Удаление не выполнено: '+error.message)}
 }
-const state={tab:'today',selected:dateKey(new Date()),month:dateKey(new Date()).slice(0,7),days:loadDays(),statsPeriod:7,editing:false};
+const state={tab:'today',selected:dateKey(new Date()),month:dateKey(new Date()).slice(0,7),days:loadDays(),statsPeriod:7,editing:false,historyDraft:null};
 function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function parseDay(k){const [y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d)}
 function shiftDay(k,n){const d=parseDay(k);d.setDate(d.getDate()+n);return dateKey(d)}
@@ -276,10 +278,10 @@ function doneWorkout(k){return !!record(k).checks[itemById('sport.workout-comple
 function weekStart(k){const d=parseDay(k);d.setDate(d.getDate()-((d.getDay()+6)%7));return dateKey(d)}
 function weekCount(k){let start=weekStart(k),n=0;for(let i=0;i<7;i++)if(doneWorkout(shiftDay(start,i)))n++;return n}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function selectDay(k){if(!validDateKey(k)||k>dateKey(new Date()))return;state.selected=k;state.month=k.slice(0,7);state.tab='history';render()}
-function navigate(tab){state.editing=false;state.tab=tab;if(tab!=='history')state.selected=dateKey(new Date());render()}
+function selectDay(k){if(!validDateKey(k)||k>dateKey(new Date())||!discardHistoryDraft())return;state.selected=k;state.month=k.slice(0,7);state.tab='history';render()}
+function navigate(tab){if(!discardHistoryDraft())return;state.editing=false;state.tab=tab;if(tab!=='history')state.selected=dateKey(new Date());render()}
 function updateNote(v){editRecord().note=v;save()}
-function syncDay(){const now=dateKey(new Date());if(now!==lastToday){if(state.selected===lastToday){state.selected=now;state.month=now.slice(0,7)}lastToday=now;render()}}
+function syncDay(){const now=dateKey(new Date());if(now!==lastToday){if(state.historyDraft){lastToday=now;return}if(state.selected===lastToday){state.selected=now;state.month=now.slice(0,7)}lastToday=now;render()}}
 let lastToday=dateKey(new Date());
 
 // v0.6 / шаг 3: каталог становится единым источником отображаемых пунктов.
@@ -310,7 +312,7 @@ function today(){let sport=weekCount(state.selected);return `<div class="card"><
 function sport(){const exerciseItems=sectionItems('sport','workout');return `<div class="card"><div class="day"><div><div class="title">Основная тренировка</div><div class="small">3 раза в неделю · 25–30 минут</div></div><div class="edit-controls"><span class="pill">${exerciseItems.filter(item=>itemChecked(item)).length}/${exerciseItems.length}</span>${editToggle()}</div></div>${groupBoxes('sport','workout')}${addButton('sport','workout')}<div style="margin-top:12px;padding-top:10px;border-top:2px solid var(--line)">${groupBoxes('sport','completion')}</div></div><div class="card"><div class="title">Ежедневно</div>${groupBoxes('sport','daily')}${addButton('sport','daily')}</div><div class="card"><div class="title">Короткий блок</div>${groupBoxes('sport','short')}${addButton('sport','short')}</div>${note()}`}
 function food(){return `<div class="card"><div class="day"><div class="title">Питание</div>${editToggle()}</div>${groupBoxes('food','meals')}${addButton('food','meals')}</div><div class="card"><div class="title">Осознанность</div>${groupBoxes('food','mindfulness')}${addButton('food','mindfulness')}</div><div class="card"><div class="title">Принцип</div><div class="small">Регулярность важнее идеальности. Минимум 3 часа между приёмами пищи.</div></div>${note()}`}
 function habits(){return `<div class="card"><div class="day"><div class="title">Привычки</div>${editToggle()}</div>${groupBoxes('habits','habits')}${addButton('habits','habits')}</div>${note()}`}
-function changeMonth(delta){const [y,m]=state.month.split('-').map(Number);const d=new Date(y,m-1+delta,1);const target=dateKey(d).slice(0,7);if(target>dateKey(new Date()).slice(0,7))return;state.month=target;render()}
+function changeMonth(delta){if(!discardHistoryDraft())return;const [y,m]=state.month.split('-').map(Number);const d=new Date(y,m-1+delta,1);const target=dateKey(d).slice(0,7);if(target>dateKey(new Date()).slice(0,7))return;state.month=target;render()}
 function calendar(){const [year,month]=state.month.split('-').map(Number);const first=new Date(year,month-1,1);const offset=(first.getDay()+6)%7;const length=new Date(year,month,0).getDate();const now=dateKey(new Date());let cells=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(d=>`<span class="calendar-weekday">${d}</span>`);for(let i=0;i<offset;i++)cells.push('<span></span>');for(let day=1;day<=length;day++){const k=`${state.month}-${String(day).padStart(2,'0')}`;const future=k>now;cells.push(`<button type="button" class="calendar-day ${k===state.selected?'selected':''} ${Object.hasOwn(state.days,k)?'has-data':''} ${doneWorkout(k)?'workout':''}" ${future?'disabled':''} onclick="selectDay('${k}')" aria-label="${k}">${day}</button>`)}return `<div class="card"><div class="calendar-head"><button class="action" onclick="changeMonth(-1)" aria-label="Предыдущий месяц">‹</button><div class="title">${first.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</div><button class="action" onclick="changeMonth(1)" ${state.month>=now.slice(0,7)?'disabled':''} aria-label="Следующий месяц">›</button></div><div class="calendar-grid">${cells.join('')}</div><div class="small" style="margin-top:12px">Точка — есть запись. Зелёный день — выполнена основная тренировка.</div></div>`}
 function readonlyDay(k){
   const r=record(k),has=Object.hasOwn(state.days,k);
@@ -326,8 +328,78 @@ function readonlyDay(k){
     const historical=[...items,...archivedChecked].sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
     return `<div class="history-group">${title}</div>`+historical.map(item=>`<div class="readonly-row"><span>${escapeHtml(item.title)}</span><b>${r.checks[storeKey(item)]?'✓':'—'}</b></div>`).join('');
   }).join('');
-  return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${has?`<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">${r.note?escapeHtml(r.note):'Нет заметки'}</div><details class="history-details"><summary>Показать подробности дня</summary>${groups}</details>`:'<div class="small">За этот день пока нет записей.</div>'}</div>`;
+  return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${k<dateKey(new Date())?`<div class="edit-tools"><button class="action" onclick="beginHistoryEdit()">Редактировать день</button></div>`:''}${has?`<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">${r.note?escapeHtml(r.note):'Нет заметки'}</div><details class="history-details"><summary>Показать подробности дня</summary>${groups}</details>`:'<div class="small">За этот день пока нет записей.</div>'}</div>`;
 }
+// v0.7.6: draft-only historical editing. No live state or storage mutation until save.
+function historyDraftChanged(){
+  const draft=state.historyDraft;
+  return !!draft&&JSON.stringify(draft.data)!==JSON.stringify(draft.original);
+}
+function discardHistoryDraft(){
+  if(!state.historyDraft)return true;
+  if(historyDraftChanged()&&!confirm('Есть несохранённые изменения. Отменить их?'))return false;
+  state.historyDraft=null;
+  return true;
+}
+function beginHistoryEdit(){
+  const k=state.selected;
+  if(state.tab!=='history'||!validDateKey(k)||k>=dateKey(new Date()))return;
+  const original=structuredClone(record(k));
+  state.historyDraft={date:k,original,data:structuredClone(original)};
+  render();
+}
+function historyEditItems(section,groups,k){
+  const items=groups.flatMap(group=>sectionItems(section,group,k));
+  const ids=new Set(items.map(item=>item.id));
+  // Preserve already checked items removed from the active set on the same day.
+  const archived=userConfig.items.filter(item=>item.sectionId===section&&groups.includes(item.group)
+    &&!ids.has(item.id)&&record(k).checks[storeKey(item)]===true);
+  return [...items,...archived].sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
+}
+function editableHistoryDay(){
+  const draft=state.historyDraft;
+  if(!draft||draft.date!==state.selected)return '';
+  const k=draft.date;
+  const sections=[['Спорт','sport',['workout','completion','daily','short']],['Питание','food',['meals','mindfulness']],['Привычки','habits',['habits']]];
+  const groups=sections.map(([title,section,parts])=>{
+    const rows=historyEditItems(section,parts,k).map(item=>{
+      const key=storeKey(item);
+      return `<label class="history-edit-row"><input type="checkbox" data-history-key="${escapeHtml(key)}" ${draft.data.checks[key]?'checked':''}><span>${escapeHtml(item.title)}</span></label>`;
+    }).join('');
+    return `<div class="history-group">${title}</div>${rows||'<div class="small">Нет пунктов на эту дату</div>'}`;
+  }).join('');
+  return `<div class="card" id="history-editor"><div class="title">Редактирование · ${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>
+    <div class="small">Изменения сохранятся только после нажатия «Сохранить».</div>${groups}
+    <div class="history-edit-note"><div class="title">Заметка дня</div><textarea class="note" id="history-edit-note" placeholder="Заметка дня">${escapeHtml(draft.data.note)}</textarea></div>
+    <div class="history-edit-actions"><button class="action primary" onclick="saveHistoryEdit()">Сохранить</button><button class="action" onclick="cancelHistoryEdit()">Отмена</button></div></div>`;
+}
+function cancelHistoryEdit(){if(!discardHistoryDraft())return;render()}
+function saveHistoryEdit(){
+  const draft=state.historyDraft;
+  if(!draft||draft.date!==state.selected||draft.date>=dateKey(new Date()))return;
+  const next=structuredClone(state.days);
+  next[draft.date]=structuredClone(draft.data);
+  try{
+    validatedDays(next);
+    localStorage.setItem(STORE,JSON.stringify(next));
+  }catch(error){alert('Не удалось сохранить изменения: '+error.message);return}
+  state.days=next;
+  state.historyDraft=null;
+  render();
+}
+document.addEventListener('change',event=>{
+  const input=event.target.closest('#history-editor input[data-history-key]');
+  if(!input||!state.historyDraft)return;
+  state.historyDraft.data.checks[input.dataset.historyKey]=input.checked;
+});
+document.addEventListener('input',event=>{
+  if(event.target.id==='history-edit-note'&&state.historyDraft)
+    state.historyDraft.data.note=event.target.value;
+});
+window.addEventListener('beforeunload',event=>{
+  if(historyDraftChanged()){event.preventDefault();event.returnValue='';}
+});
+
 // v0.7.5: при архивировании в тот же день не теряем уже выполненные
 // пункты из исторической статистики. Отметки сохраняются под прежними ключами.
 function metricItems(section,group,k){
@@ -396,7 +468,7 @@ function statistics(){
     +statChart('Питание',dates,foodDone,Math.round(foodDays/n*100)+'% · '+foodDays+'/'+n+' дней','Режим соблюдён, если отмечены все приёмы пищи. Осознанность не влияет на результат')
     +habitStatistics(dates);
 }
-function history(){return calendar()+statistics()+readonlyDay(state.selected)+backupControls();}
+function history(){return calendar()+statistics()+(state.historyDraft?editableHistoryDay():readonlyDay(state.selected))+backupControls();}
 
 
 const BACKUP_FORMAT='my-rhythm-backup';
