@@ -14,6 +14,7 @@ main{padding:8px 16px 94px;max-width:720px;margin:auto}.card{background:var(--ca
 .calendar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.calendar-head .title{margin:0}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;text-align:center}.calendar-weekday{font-size:12px;color:var(--muted);padding:5px 0}.calendar-day{border:1px solid transparent;border-radius:10px;min-height:42px;background:var(--soft);color:var(--text);font:inherit;cursor:pointer;position:relative}.calendar-day:disabled{opacity:.25;cursor:default}.calendar-day.empty{visibility:hidden}.calendar-day.selected{border:2px solid var(--accent);font-weight:700}.calendar-day.has-data:after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);position:absolute;bottom:3px;left:calc(50% - 2.5px)}.calendar-day.workout{background:var(--accent);color:var(--card)}.calendar-day.workout:after{background:currentColor}.readonly-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.readonly-row:last-child{border:0}.history-note{white-space:pre-wrap;overflow-wrap:anywhere}
 .stats-switch{display:flex;gap:6px;margin:12px 0}.stats-switch button{flex:1}.stats-switch button.active{background:var(--accent);color:var(--card)}.chart-row{display:flex;align-items:end;gap:5px;height:95px;margin:14px 0 8px}.chart-column{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:5px}.chart-bar{width:100%;max-width:28px;min-height:3px;background:var(--accent);border-radius:5px 5px 2px 2px}.chart-label{font-size:10px;color:var(--muted);white-space:nowrap}.chart-empty{color:var(--muted);font-size:13px}
 .edit-tools{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.edit-row{display:flex;gap:8px;align-items:center}.edit-row .row{flex:1;min-width:0}.edit-mini{border:0;background:var(--soft);color:var(--accent);border-radius:9px;padding:7px 9px;cursor:pointer}.edit-toggle{margin-left:auto;white-space:nowrap}.edit-controls{display:flex;align-items:center;gap:5px;flex-shrink:0}.edit-mini{min-width:38px;min-height:42px;display:inline-flex;align-items:center;justify-content:center}.drag-handle{touch-action:none;cursor:grab;font-size:22px;line-height:1}.drag-handle:active{cursor:grabbing}.edit-row.dragging{opacity:.5}.edit-row.drop-before{border-top:3px solid var(--accent)}.edit-row.drop-after{border-bottom:3px solid var(--accent)}.edit-row .row span{overflow-wrap:anywhere}.history-details{margin-top:12px}.history-details summary{cursor:pointer;color:var(--accent);font-weight:650;padding:10px 0}.history-group{font-weight:700;margin:14px 0 5px}.delete-choice{max-width:420px}.edit-mini:disabled{opacity:.28;cursor:default}.edit-row .row{border-bottom:0}.edit-input{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}
+.habit-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}.habit-metric{padding:12px;border-radius:12px;background:var(--soft)}.habit-metric b{font-size:23px;display:block}.habit-details{margin-top:14px}.habit-details summary{cursor:pointer;color:var(--accent);font-weight:650;padding:10px 0}.habit-stat{padding:12px 0;border-top:1px solid var(--line)}.habit-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-top:8px}.habit-days.long{grid-template-columns:repeat(15,minmax(0,1fr))}.habit-day{min-width:0;border-radius:6px;background:var(--line);text-align:center;padding:8px 0;font-size:11px;color:var(--muted)}.habit-day.yes{background:var(--accent);color:var(--card)}.habit-day.na{background:transparent;border:1px dashed var(--line);color:var(--muted)}
 </style></head>
 <body><div id="app"><header><h1>Мой ритм</h1><div class="date">Сегодня · понедельник</div></header><main id="main"></main><nav class="tabs" id="tabs"></nav></div>
 <script>
@@ -327,12 +328,75 @@ function readonlyDay(k){
   }).join('');
   return `<div class="card"><div class="title">${parseDay(k).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}</div>${has?`<div class="title" style="margin-top:16px">Заметка дня</div><div class="small history-note">${r.note?escapeHtml(r.note):'Нет заметки'}</div><details class="history-details"><summary>Показать подробности дня</summary>${groups}</details>`:'<div class="small">За этот день пока нет записей.</div>'}</div>`;
 }
-function foodDone(k){return groupComplete('food','meals',k)&&groupComplete('food','mindfulness',k)}
-function creativeDone(k){return groupComplete('habits','habits',k)}
+// v0.7.5: при архивировании в тот же день не теряем уже выполненные
+// пункты из исторической статистики. Отметки сохраняются под прежними ключами.
+function metricItems(section,group,k){
+  const active=sectionItems(section,group,k);
+  const activeIds=new Set(active.map(item=>item.id));
+  const archivedChecked=userConfig.items.filter(item=>item.sectionId===section&&item.group===group
+    &&!activeIds.has(item.id)&&record(k).checks[storeKey(item)]===true);
+  return [...active,...archivedChecked];
+}
+function metricGroupComplete(section,group,k){
+  const items=metricItems(section,group,k);
+  return items.length>0&&items.every(item=>itemChecked(item,k));
+}
+function foodDone(k){return metricGroupComplete('food','meals',k)}
+// Отдельные привычки и общий показатель используют один исторический каталог.
+// Сохраняем отмеченные архивные пункты при изменении списка в тот же день.
+function habitItems(k){return metricItems('habits','habits',k)}
+function habitRate(k){const items=habitItems(k);if(!items.length)return null;return items.filter(item=>itemChecked(item,k)).length/items.length}
+function habitDone(k){return habitRate(k)===1}
 function statsPeriod(n){state.statsPeriod=n;render()}
 function statChart(title,dates,metric,total,subtitle){const n=dates.length;const step=n===30?5:1;const bars=dates.map((k,i)=>{const value=metric(k)?1:0;const label=(n===7||i%step===0||i===n-1)?String(parseDay(k).getDate()):'·';return `<div class="chart-column" title="${k}: ${value?'да':'нет'}"><div class="chart-bar" style="height:${value?68:3}px;${value?'':'opacity:.2'}"></div><span class="chart-label">${label}</span></div>`}).join('');return `<div class="card"><div class="day"><div class="title">${title}</div><span class="pill">${total}</span></div><div class="small">${subtitle}</div><div class="chart-row" role="img" aria-label="${title}: ${total} за ${n} дней">${bars}</div></div>`}
-function statistics(){const n=state.statsPeriod,now=dateKey(new Date()),dates=Array.from({length:n},(_,i)=>shiftDay(now,i-n+1));const workoutsDone=dates.filter(doneWorkout).length,foodDays=dates.filter(foodDone).length,creativeDays=dates.filter(creativeDone).length;return `<div class="card"><div class="title">Статистика</div><div class="small">За последние ${n} дней, включая сегодня</div><div class="stats-switch"><button class="action ${n===7?'active':''}" onclick="statsPeriod(7)">7 дней</button><button class="action ${n===30?'active':''}" onclick="statsPeriod(30)">30 дней</button></div></div>`+statChart('Спорт',dates,doneWorkout,workoutsDone+' тренировок','Цель — 3 тренировки в неделю · по отметке завершения')+statChart('Питание',dates,foodDone,Math.round(foodDays/n*100)+'% · '+foodDays+'/'+n+' дней','Все пункты питания, действовавшие в соответствующий день')+statChart('Творчество',dates,creativeDone,creativeDays+'/'+n+' дней','Рисование не менее 10 минут')}
-function history(){const start=weekStart(state.selected),count=weekCount(state.selected);return calendar()+statistics()+`<div class="card"><div class="title">Спорт за неделю · ${escapeHtml(start)}</div><div class="day"><span>Основных тренировок</span><b>${count}/3</b></div><div class="progress"><div class="bar" style="width:${Math.min(100,count/3*100)}%"></div></div></div>`+readonlyDay(state.selected)+backupControls()}
+function habitStatistics(dates){
+  const eligible=dates.map(habitRate).filter(rate=>rate!==null);
+  const completed=eligible.filter(rate=>rate===1).length;
+  const average=eligible.length?Math.round(eligible.reduce((sum,rate)=>sum+rate,0)/eligible.length*100):0;
+  const allIds=new Set(dates.flatMap(k=>habitItems(k).map(item=>item.id)));
+  const items=userConfig.items.filter(item=>allIds.has(item.id)&&item.sectionId==='habits'&&item.group==='habits').sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
+  const rows=items.map(item=>{
+    const count=dates.filter(k=>habitItems(k).some(x=>x.id===item.id)&&itemChecked(item,k)).length;
+    const cells=dates.map(k=>{
+      const exists=habitItems(k).some(x=>x.id===item.id);
+      const yes=exists&&itemChecked(item,k);
+      return `<span class="habit-day ${!exists?'na':yes?'yes':''}" title="${k}: ${!exists?'не действовала':yes?'выполнено':'не выполнено'}">${!exists?'·':yes?'✓':'–'}</span>`;
+    }).join('');
+    return `<div class="habit-stat"><div class="day"><b>${escapeHtml(item.title)}</b><span class="pill">${count}/${dates.filter(k=>habitItems(k).some(x=>x.id===item.id)).length}</span></div><div class="habit-days ${dates.length===30?'long':''}">${cells}</div></div>`;
+  }).join('');
+  return `<div class="card"><div class="title">Привычки</div><div class="small">Только дни, когда действовала хотя бы одна привычка</div><div class="habit-summary"><div class="habit-metric"><b>${completed}/${eligible.length}</b><span class="small">полностью закрытых дней</span></div><div class="habit-metric"><b>${average}%</b><span class="small">среднее выполнение</span></div></div><details class="habit-details"><summary>По отдельным привычкам</summary>${rows||'<div class="small">За этот период привычек не было.</div>'}<div class="small">✓ выполнено · – не выполнено · · ещё не действовала</div></details></div>`;
+}
+function sportStatistics(dates){
+  const workouts=dates.filter(doneWorkout).length;
+  const groups=[
+    {title:'Основная тренировка',test:doneWorkout,description:'По отметке «Тренировка завершена»'},
+    {title:'Ежедневные занятия',test:k=>metricGroupComplete('sport','daily',k),description:'Все упражнения ежедневной группы'},
+    {title:'Короткий блок',test:k=>metricGroupComplete('sport','short',k),description:'Все упражнения короткого блока'}
+  ];
+  const details=groups.map(group=>{
+    const total=dates.filter(group.test).length;
+    const cells=dates.map(k=>{
+      const applicable=group.test===doneWorkout?metricItems('sport','completion',k).length>0:
+        metricItems('sport',group.title==='Ежедневные занятия'?'daily':'short',k).length>0;
+      const yes=applicable&&group.test(k);
+      return `<span class="habit-day ${!applicable?'na':yes?'yes':''}" title="${k}: ${!applicable?'нет упражнений':yes?'выполнено':'не выполнено'}">${!applicable?'·':yes?'✓':'–'}</span>`;
+    }).join('');
+    const eligible=dates.filter(k=>group.test===doneWorkout?metricItems('sport','completion',k).length>0:
+      metricItems('sport',group.title==='Ежедневные занятия'?'daily':'short',k).length>0).length;
+    return `<div class="habit-stat"><div class="day"><b>${group.title}</b><span class="pill">${total}/${eligible}</span></div><div class="small">${group.description}</div><div class="habit-days ${dates.length===30?'long':''}">${cells}</div></div>`;
+  }).join('');
+  return statChart('Спорт',dates,doneWorkout,workouts+' тренировок','Завершённые основные тренировки')
+    .replace(/<\/div>$/,`<details class="habit-details"><summary>Подробности активности</summary>${details}<div class="small">✓ выполнено · – не выполнено · · не действовала</div></details></div>`);
+}
+function statistics(){
+  const n=state.statsPeriod,now=dateKey(new Date()),dates=Array.from({length:n},(_,i)=>shiftDay(now,i-n+1));
+  const foodDays=dates.filter(foodDone).length;
+  return `<div class="card"><div class="title">Статистика</div><div class="small">За последние ${n} дней, включая сегодня</div><div class="stats-switch"><button class="action ${n===7?'active':''}" onclick="statsPeriod(7)">7 дней</button><button class="action ${n===30?'active':''}" onclick="statsPeriod(30)">30 дней</button></div></div>`
+    +sportStatistics(dates)
+    +statChart('Питание',dates,foodDone,Math.round(foodDays/n*100)+'% · '+foodDays+'/'+n+' дней','Режим соблюдён, если отмечены все приёмы пищи. Осознанность не влияет на результат')
+    +habitStatistics(dates);
+}
+function history(){return calendar()+statistics()+readonlyDay(state.selected)+backupControls();}
 
 
 const BACKUP_FORMAT='my-rhythm-backup';
